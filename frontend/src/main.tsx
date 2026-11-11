@@ -1,3 +1,4 @@
+import { AuthProvider } from "./auth/AuthProvider";
 import { LanguageProvider } from "./i18n";
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -12,7 +13,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
-        <App />
+        <AuthProvider><App /></AuthProvider>
       </LanguageProvider>
     </QueryClientProvider>
   </React.StrictMode>,

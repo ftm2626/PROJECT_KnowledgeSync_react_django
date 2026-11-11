@@ -1,5 +1,5 @@
 import { useLanguage } from '../i18n'
-import { ArrowUp, ArrowUpRight, CalendarDays, Check, Clock3, Download, ExternalLink, Hand, Mic2, Sparkles } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, CalendarDays, Check, Clock3, Download, ExternalLink, Hand, Mic2, Sparkles, Pencil, Trash2 } from 'lucide-react'
 import type { Topic, User } from '../types'
 import type { FormMode } from './TopicForm'
 export function initials(name: string) {return name.split(' ').map(part => part[0]).slice(0,2).join('')}
@@ -23,6 +23,10 @@ export function TopicCard({topic, user, busy, onVote, onClaim, onForm}: {topic: 
     {topic.scheduled_at && <div className="session-date"><CalendarDays size={17}/><time dateTime={topic.scheduled_at}>{dateFormat.format(new Date(topic.scheduled_at))}</time></div>}
     <div className="card-person"><span className={'avatar avatar-' + topic.proposer.id % 5}>{initials(topic.proposer.name)}</span><div><span className="person-name" dir="auto">{topic.proposer.name}</span><span className="person-role">{topic.presenter?.id === topic.proposer.id ? t("Proposer & presenter") : t("Proposed this topic")}</span></div></div>
     {topic.presenter && topic.presenter.id !== topic.proposer.id && <p className="presenter-note"><Mic2 size={13}/>{t("Presenter: {name}", {name: topic.presenter.name})}</p>}
+    {topic.proposer.id === user?.id && <div className="creator-actions" aria-label={t('Manage your idea')}>
+      <button className="text-button" disabled={busy} onClick={() => onForm({type:'edit', topic})} aria-label={t('Edit idea: {title}', {title: topic.title})}><Pencil size={14}/>{t('Edit')}</button>
+      <button className="text-button delete-action" disabled={busy} onClick={() => onForm({type:'delete', topic})} aria-label={t('Delete idea: {title}', {title: topic.title})}><Trash2 size={14}/>{t('Delete')}</button>
+    </div>}
     <div className="card-footer">
       {proposed ? <button className={'vote-button ' + (topic.has_voted ? 'voted' : '')} aria-label={(topic.has_voted ? t("Remove vote for ") : t("Vote for ")) + topic.title} aria-pressed={topic.has_voted} disabled={!user || busy} onClick={onVote}><ArrowUp size={18}/><strong>{number(topic.vote_count)}</strong><span>{t("votes")}</span></button> : <span className="interest"><Check size={15}/>{number(topic.vote_count)} {t("interested")}</span>}
       {proposed && !topic.presenter && <button className="text-button" disabled={!user || busy} onClick={onClaim}><Hand size={15}/>{t("Volunteer to present")}</button>}

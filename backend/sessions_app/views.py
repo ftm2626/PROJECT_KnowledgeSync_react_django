@@ -1,7 +1,8 @@
-from django.contrib.auth.models import User
+from django.contrib.auth import authenticate
+from django.http import Http404
 from django.db import transaction
 from django.utils import timezone
-from django.db.models import Count, Exists, OuterRef, Value, BooleanField
+from django.db.models import Count, Exists, OuterRef, Value, BooleanField, F
 from rest_framework import mixins, viewsets, status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
@@ -11,9 +12,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import serializers
 from .models import Topic, Vote
-from .serializers import TopicSerializer, UserSerializer, ScheduleSerializer, CompleteSerializer
+from .serializers import TopicSerializer, UserSerializer, ScheduleSerializer, CompleteSerializer, TopicEditSerializer
 
-class TopicViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
+class TopicViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.CreateModelMixin, mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
     serializer_class = TopicSerializer
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['title', 'description', 'proposer__first_name', 'presenter__first_name']
@@ -37,6 +38,32 @@ class TopicViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
     def updated_response(self, topic):
         topic = self.get_queryset().get(pk=topic.pk)
         return Response(self.get_serializer(topic).data)
+
+    def require_creator(self, topic):
+        if topic.proposer_id != self.request.user.id:
+            raise PermissionDenied('Only the creator can edit or delete this idea.')
+
+    def update(self, request, *args, **kwargs):
+        try:
+            topic_id = int(kwargs['pk'])
+        except (ValueError, TypeError):
+            raise Http404
+        with transaction.atomic():
+            # Acquire SQLite's write lock before checking presenter and lifecycle state.
+            Topic.objects.filter(pk=topic_id).update(updated_at=F('updated_at'))
+            topic = self.get_object()
+            self.require_creator(topic)
+            serializer = TopicEditSerializer(topic, data=request.data, partial=kwargs.get('partial', False))
+            serializer.is_valid(raise_exception=True)
+            changes = dict(serializer.validated_data)
+            if changes.get('kind', topic.kind) != topic.kind:
+                changes['presenter_id'] = topic.proposer_id if changes['kind'] == Topic.Kind.OFFER else None
+            Topic.objects.filter(pk=topic.pk).update(**changes, updated_at=timezone.now())
+            return self.updated_response(topic)
+
+    def perform_destroy(self, instance):
+        self.require_creator(instance)
+        instance.delete()
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def vote(self, request, pk=None):
@@ -88,20 +115,29 @@ class TopicViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
         Topic.objects.filter(pk=topic.pk, status=Topic.Status.SCHEDULED).update(**serializer.validated_data, status=Topic.Status.COMPLETED, updated_at=timezone.now())
         return self.updated_response(topic)
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def users(request):
-    return Response(UserSerializer(User.objects.filter(is_active=True, is_staff=False).order_by('first_name', 'username'), many=True).data)
-
-class IdentitySerializer(serializers.Serializer):
-    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(is_active=True, is_staff=False))
+class LoginSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
 
 @api_view(['POST'])
 @authentication_classes([])
 @permission_classes([AllowAny])
-def mock_login(request):
-    serializer = IdentitySerializer(data=request.data)
+def login(request):
+    serializer = LoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    user = serializer.validated_data['user_id']
+    user = authenticate(request=request, **serializer.validated_data)
+    if user is None:
+        return Response({'detail': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
     token, _ = Token.objects.get_or_create(user=user)
     return Response({'token': token.key, 'user': UserSerializer(user).data})
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def me(request):
+    return Response(UserSerializer(request.user).data)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    request.auth.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

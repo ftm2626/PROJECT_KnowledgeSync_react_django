@@ -42,3 +42,20 @@ class CompleteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Topic
         fields = ['slides_url']
+
+class TopicEditSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(max_length=200, allow_blank=False)
+    description = serializers.CharField(allow_blank=False)
+
+    class Meta:
+        model = Topic
+        fields = ['title', 'description', 'kind', 'duration_minutes']
+
+    def validate_kind(self, value):
+        topic = self.instance
+        if value != topic.kind:
+            if topic.status != Topic.Status.PROPOSED:
+                raise serializers.ValidationError('Topic type can only be changed before scheduling.')
+            if topic.presenter_id and topic.presenter_id != topic.proposer_id:
+                raise serializers.ValidationError('Topic type cannot be changed after a volunteer has claimed the idea.')
+        return value

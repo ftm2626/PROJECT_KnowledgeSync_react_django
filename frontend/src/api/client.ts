@@ -10,7 +10,7 @@ export const api = axios.create({
     ).replace(/\/$/, "") + "/",
   timeout: 15000,
 });
-export function readIdentity(): Identity | null {
+function loadIdentity(): Identity | null {
   try {
     const value = JSON.parse(
       localStorage.getItem("knowledgesync.identity") || "null",
@@ -20,10 +20,34 @@ export function readIdentity(): Identity | null {
     return null;
   }
 }
+let currentIdentity = loadIdentity();
+const identityListeners = new Set<(identity: Identity | null) => void>();
+export function readIdentity() { return currentIdentity; }
+export function writeIdentity(identity: Identity | null) {
+  currentIdentity = identity;
+  try {
+    if (identity) localStorage.setItem('knowledgesync.identity', JSON.stringify(identity));
+    else localStorage.removeItem('knowledgesync.identity');
+  } catch { /* Authentication still works in memory when storage is unavailable. */ }
+  identityListeners.forEach(listener => listener(identity));
+}
+export function subscribeIdentity(listener: (identity: Identity | null) => void) {
+  identityListeners.add(listener);
+  return () => { identityListeners.delete(listener); };
+}
 api.interceptors.request.use((config) => {
   const identity = readIdentity();
   if (identity) config.headers.Authorization = "Token " + identity.token;
   return config;
+});
+api.interceptors.response.use(response => response, error => {
+  const identity = readIdentity();
+  // A delayed response from a previous login must not sign out the current user.
+  if (error.response?.status === 401 && error.config?.url !== 'auth/login/' && identity &&
+      error.config?.headers?.Authorization === 'Token ' + identity.token) {
+    writeIdentity(null);
+  }
+  return Promise.reject(error);
 });
 export function errorMessage(
   error: unknown,

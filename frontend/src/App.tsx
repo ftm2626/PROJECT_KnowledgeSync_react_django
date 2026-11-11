@@ -1,3 +1,6 @@
+import { useAuth } from "./auth/AuthProvider";
+import { LoginScreen, AuthStatus } from "./auth/LoginScreen";
+import { LanguageSwitch } from "./components/LanguageSwitch";
 import { useLanguage } from "./i18n";
 import { useMemo, useState } from "react";
 import {
@@ -6,7 +9,7 @@ import {
   BookOpen,
   CalendarDays,
   Check,
-  ChevronDown,
+  LogOut,
   CircleHelp,
   GraduationCap,
   LayoutGrid,
@@ -14,24 +17,27 @@ import {
   Plus,
   Search,
   Sparkles,
-  Users,
   X,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { errorMessage, readIdentity } from "./api/client";
-import { useLogin, useTopics, useTopicMutation, useUsers } from "./api/hooks";
+import { errorMessage } from "./api/client";
+import { useTopics, useTopicMutation } from "./api/hooks";
 import { TopicCard, initials } from "./components/TopicCard";
 import { TopicForm, type FormMode } from "./components/TopicForm";
 import { Modal } from "./components/Modal";
-import type { Identity, Status, Topic } from "./types";
+import type { Status, Topic } from "./types";
 export default function App() {
-  const { t, language, setLanguage, locale, number } = useLanguage();
+  const auth = useAuth();
+  if (auth.checking || auth.checkError) return <AuthStatus />;
+  return auth.identity ? <LearningBoard /> : <LoginScreen />;
+}
+export function LearningBoard() {
+  const { t, language, locale, number } = useLanguage();
   const tabs: { status: Status; label: string; icon: typeof LayoutGrid }[] = [
     { status: "PROPOSED", label: t("Voting board"), icon: LayoutGrid },
     { status: "SCHEDULED", label: t("Upcoming sessions"), icon: CalendarDays },
     { status: "COMPLETED", label: t("Past archives"), icon: BookOpen },
   ];
-  const [identity, setIdentity] = useState<Identity | null>(readIdentity);
+  const { identity, logout } = useAuth();
   const [tab, setTab] = useState<Status>("PROPOSED");
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState("ALL");
@@ -40,11 +46,8 @@ export default function App() {
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
-  const users = useUsers();
   const topics = useTopics(identity?.user.id);
-  const login = useLogin();
   const mutation = useTopicMutation();
-  const client = useQueryClient();
   const all = topics.data || [];
   const visible = useMemo(
     () =>
@@ -85,23 +88,6 @@ export default function App() {
       (a, b) =>
         Date.parse(a.scheduled_at || "") - Date.parse(b.scheduled_at || ""),
     )[0];
-  async function switchUser(value: string) {
-    setNotice("");
-    setActionError(null);
-    if (!value) {
-      localStorage.removeItem("knowledgesync.identity");
-      setIdentity(null);
-      return;
-    }
-    try {
-      const result = await login.mutateAsync(Number(value));
-      localStorage.setItem("knowledgesync.identity", JSON.stringify(result));
-      setIdentity(result);
-      await client.invalidateQueries({ queryKey: ["topics"] });
-    } catch (error) {
-      setActionError(error);
-    }
-  }
   async function act(topic: Topic, action: "vote" | "claim") {
     setNotice("");
     setActionError(null);
@@ -135,55 +121,15 @@ export default function App() {
             </span>
           </a>
           <div className="header-actions">
-            <div
-              className="language-switch"
-              role="group"
-              aria-label={t("Language")}
-            >
-              <button
-                type="button"
-                lang="en"
-                aria-pressed={language === "en"}
-                onClick={() => setLanguage("en")}
-              >
-                English
-              </button>
-              <button
-                type="button"
-                lang="fa"
-                aria-pressed={language === "fa"}
-                onClick={() => setLanguage("fa")}
-              >
-                فارسی
-              </button>
-            </div>
+            <LanguageSwitch />
             <span className="team-space">
               <span className="live-dot" />
               {t("Our team’s learning space")}
             </span>
-            <div className="user-select">
-              <span className="avatar avatar-0">
-                {identity ? initials(identity.user.name) : <Users size={17} />}
-              </span>
-              <label className="sr-only" htmlFor="identity">
-                {t("Choose your team identity")}
-              </label>
-              <select
-                id="identity"
-                value={identity?.user.id || ""}
-                onChange={(event) => switchUser(event.target.value)}
-                disabled={login.isPending || users.isLoading}
-              >
-                <option value="">
-                  {users.isLoading ? t("Loading team…") : t("Choose your name")}
-                </option>
-                {users.data?.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
+            <div className="signed-in-user">
+              <span className="avatar avatar-0">{identity ? initials(identity.user.name) : ''}</span>
+              <bdi className="signed-in-name">{identity?.user.name}</bdi>
+              <button className="button secondary logout-button" disabled={logout.isPending} onClick={() => logout.mutate()}><LogOut size={15}/>{t(logout.isPending ? 'Signing out…' : 'Sign out')}</button>
             </div>
           </div>
         </div>
@@ -289,24 +235,7 @@ export default function App() {
             <ArrowUpRight size={20} />
           </button>
         </section>
-        {!identity && (
-          <div className="identity-note">
-            <Users size={17} />
-            <span>
-              {t(
-                "Make yourself at home. Choose your name above to vote, share an idea, or volunteer to present.",
-              )}
-            </span>
-          </div>
-        )}
-        {users.isError && (
-          <div className="error-banner" role="alert">
-            {errorMessage(users.error, language)}{" "}
-            <button onClick={() => users.refetch()}>
-              {t("Retry team list")}
-            </button>
-          </div>
-        )}
+        {logout.isError && <div className="error-banner" role="alert">{errorMessage(logout.error, language)}</div>}
         {!!actionError && (
           <div className="error-banner" role="alert">
             {errorMessage(actionError, language)}
@@ -530,7 +459,7 @@ export default function App() {
           {t("Made for our team")}
         </span>
       </footer>
-      {form && <TopicForm mode={form} onClose={() => setForm(null)} />}
+      {form && <TopicForm key={form.type + (form.type === "propose" ? "" : form.topic.id)} mode={form} onClose={() => setForm(null)} />}
       {help && (
         <Modal
           title={t("Everyone has something to share.")}
@@ -546,7 +475,7 @@ export default function App() {
                 <strong>{t("Start with a spark")}</strong>
                 <p>
                   {t(
-                    "Choose your name, then offer a lightning talk or request something you’d love to learn.",
+                    "Offer a lightning talk or request something you’d love to learn.",
                   )}
                 </p>
               </div>
